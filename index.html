@@ -1,0 +1,355 @@
+<!-- Copyright 2025 Browser Gameware. All Rights Reserved. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Weltkrieg: Currency Market Simulator</title>
+    <link rel="stylesheet" href="https://cdn360.pages.dev/gameware/fonts/library.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Barclay Sans', sans-serif;
+            background: #f4f4f4;
+            padding: 20px;
+            max-width: 960px;
+            margin: auto;
+        }
+        h1, h2 {
+            font-family: 'Barclay Sans';
+            text-align: center;
+        }
+        form, .stock-list, .market-controls {
+            background: #fff;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        input, button, select {
+            font-family: 'Barclay Sans';
+            padding: 8px;
+            margin: 5px;
+            font-size: 1em;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: center;
+        }
+        th {
+            background: #eee;
+        }
+        .actions button {
+            margin: 2px;
+        }
+        .total-value {
+            font-weight: bold;
+            font-size: 1.2em;
+            text-align: right;
+            margin-top: 10px;
+        }
+        .market-controls {
+            text-align: center;
+        }
+        #marketChart {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+    <body>
+    <h1>Weltkrieg: Currency Market Simulator</h1>
+
+    <form id="addStockForm">
+        <label>Currency Name: <input type="text" id="stockName" required></label>
+        <label>Initial Price: <input type="number" id="stockPrice" required step="0.01"></label>
+        <label>Shares Owned: <input type="number" id="stockOwned" value="0" required></label>
+        <button type="submit">Add Currency</button>
+    </form>
+
+    <form id="addCountryForm">
+        <h2>Add Country</h2>
+        <label>Country Name: <input type="text" id="countryName" required></label>
+        <label>Starting Money: <input type="number" id="countryMoney" required step="0.01"></label>
+        <label>Assigned Currency:
+        <select id="countryCurrency">
+            <option value="">-- Select Currency --</option>
+        </select>
+        </label>
+        <button type="submit">Add Country</button>
+    </form>
+
+    <div class="market-controls">
+        <h2>Market Events (Apply to All Currencies)</h2>
+        <button onclick="applyGlobalChange(0.75)">💥 Crash (-25%)</button>
+        <button onclick="applyGlobalChange(0.5)">📉 Depression (-50%)</button>
+        <button onclick="applyGlobalChange(1.25)">📈 Boom (+25%)</button>
+        <button onclick="applyGlobalChange(1.5)">🚀 Spike (+50%)</button>
+        <button onclick="customGlobalChange()">🎯 Custom %</button>
+    </div>
+
+    <div class="stock-list">
+        <table id="stockTable">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Price</th>
+                    <th>Owned</th>
+                    <th>Value</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <div class="total-value" id="totalValue">Total Value: $0.00</div>
+        <canvas id="marketChart" height="100"></canvas>
+    </div>
+
+    <div class="stock-list">
+        <h2>Countries</h2>
+        <div id="countryList"></div>
+    </div>
+
+    <script>
+        const form = document.getElementById('addStockForm');
+        const tableBody = document.querySelector('#stockTable tbody');
+        const totalValueEl = document.getElementById('totalValue');
+        const countryCurrencySelect = document.getElementById('countryCurrency');
+        const countryForm = document.getElementById('addCountryForm');
+        const countryList = document.getElementById('countryList');
+
+        let stocks = [];
+        let countries = [];
+        let marketHistory = [];
+
+        const chartCtx = document.getElementById('marketChart').getContext('2d');
+        const marketChart = new Chart(chartCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Total Market Value',
+                    data: [],
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Update #' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Total Value ($)' }
+                    }
+                }
+            }
+        });
+
+        function formatCurrency(val) {
+            return '$' + val.toFixed(2);
+        }
+
+        function updateCurrencyDropdown() {
+            countryCurrencySelect.innerHTML = '<option value="">-- Select Currency --</option>';
+            stocks.forEach(stock => {
+                const option = document.createElement('option');
+                option.value = stock.name;
+                option.textContent = stock.name;
+                countryCurrencySelect.appendChild(option);
+            });
+        }
+
+        function updateTable() {
+            tableBody.innerHTML = '';
+            let total = 0;
+            stocks.forEach((stock, index) => {
+                const value = stock.price * stock.owned;
+                total += value;
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                <td>${stock.name}</td>
+                <td>${formatCurrency(stock.price)}</td>
+                <td><input type="number" min="0" value="${stock.owned}" data-index="${index}" class="ownedInput" /></td>
+                <td>${formatCurrency(value)}</td>
+                <td class="actions">
+                <button onclick="changePrice(${index}, 0.75)">💥 Crash</button>
+                <button onclick="changePrice(${index}, 0.5)">📉 Depression</button>
+                <button onclick="changePrice(${index}, 1.25)">📈 Boom</button>
+                <button onclick="changePrice(${index}, 1.5)">🚀 Spike</button>
+                <button onclick="customChange(${index})">🎯 Custom</button>
+                <button onclick="removeStock(${index})">❌ Remove</button>
+                </td>
+                `;
+                tableBody.appendChild(row);
+            });
+
+            totalValueEl.textContent = 'Total Value: ' + formatCurrency(total);
+
+            marketHistory.push(total);
+            marketChart.data.labels.push(marketHistory.length);
+            marketChart.data.datasets[0].data.push(total);
+            marketChart.update();
+
+            updateCountryDisplays();
+        }
+
+        function updateCountryDisplays() {
+            countryList.innerHTML = '';
+            countries.forEach((country, idx) => {
+                let portfolioValue = 0;
+                const portfolio = Object.entries(country.portfolio).map(([currency, qty]) => {
+                    const stock = stocks.find(s => s.name === currency);
+                    if (stock) {
+                        const value = stock.price * qty;
+                        portfolioValue += value;
+                        return `${currency}: ${qty} shares (${formatCurrency(value)})`;
+                    }
+                    return `${currency}: ${qty} shares`;
+                }).join('<br>');
+
+                const affordability = stocks.map(stock => {
+                    const shares = Math.floor(country.money / stock.price);
+                    return `${stock.name}: ${shares} shares`;
+                }).join('<br>');
+
+                const countryEl = document.createElement('div');
+                countryEl.style.marginBottom = '10px';
+                countryEl.innerHTML = `
+                <strong>${country.name}</strong><br>
+                Balance: ${formatCurrency(country.money)}<br>
+                Assigned Currency: ${country.currency || 'None'}<br>
+                Portfolio Value: ${formatCurrency(portfolioValue)}<br>
+                Holdings:<br>${portfolio || 'None'}<br><br>
+                <em>Can afford:</em><br>${affordability}<br><br>
+                <label>Buy Currency:
+                <select id="buyCurrency-${idx}">
+                ${stocks.map(s => `<option value="${s.name}">${s.name}</option>`).join('')}
+                </select>
+                Amount: <input type="number" min="1" id="buyAmount-${idx}" value="1" style="width: 60px;">
+                <button onclick="buyCurrency(${idx})">Buy</button>
+                </label><br>
+                <label>Sell Currency:
+                <select id="sellCurrency-${idx}">
+                ${Object.keys(country.portfolio).map(c => `<option value="${c}">${c}</option>`).join('')}
+                </select>
+                Amount: <input type="number" min="1" id="sellAmount-${idx}" value="1" style="width: 60px;">
+                <button onclick="sellCurrency(${idx})">Sell</button>
+                </label>
+                `;
+                countryList.appendChild(countryEl);
+            });
+        }
+
+        function changePrice(index, multiplier) {
+            stocks[index].price *= multiplier;
+            updateTable();
+        }
+
+        function customChange(index) {
+            const percent = prompt('Enter percentage change (e.g. 20 or -10)');
+            const factor = 1 + (parseFloat(percent) / 100);
+            if (!isNaN(factor)) changePrice(index, factor);
+        }
+
+        function applyGlobalChange(multiplier) {
+            stocks.forEach(stock => stock.price *= multiplier);
+            updateTable();
+        }
+
+        function customGlobalChange() {
+            const percent = prompt('Enter global % change:');
+            const factor = 1 + (parseFloat(percent) / 100);
+            if (!isNaN(factor)) applyGlobalChange(factor);
+        }
+
+        function removeStock(index) {
+            if (confirm(`Remove ${stocks[index].name}?`)) {
+                stocks.splice(index, 1);
+                updateCurrencyDropdown();
+                updateTable();
+            }
+        }
+
+        function buyCurrency(idx) {
+            const country = countries[idx];
+            const currency = document.getElementById(`buyCurrency-${idx}`).value;
+            const amount = parseInt(document.getElementById(`buyAmount-${idx}`).value);
+            const stock = stocks.find(s => s.name === currency);
+            const cost = stock.price * amount;
+
+            if (country.money >= cost) {
+                country.money -= cost;
+                country.portfolio[currency] = (country.portfolio[currency] || 0) + amount;
+                stock.owned += amount;
+                stock.price *= (1 + 0.01 * amount);
+                updateTable();
+            } else {
+                alert('Insufficient funds');
+            }
+        }
+
+        function sellCurrency(idx) {
+            const country = countries[idx];
+            const currency = document.getElementById(`sellCurrency-${idx}`).value;
+            const amount = parseInt(document.getElementById(`sellAmount-${idx}`).value);
+            const stock = stocks.find(s => s.name === currency);
+
+            if ((country.portfolio[currency] || 0) >= amount) {
+                const revenue = stock.price * amount;
+                country.money += revenue;
+                country.portfolio[currency] -= amount;
+                if (country.portfolio[currency] <= 0) delete country.portfolio[currency];
+                stock.owned -= amount;
+                stock.price *= (1 - 0.01 * amount);
+                if (stock.price < 0.01) stock.price = 0.01;
+                updateTable();
+            } else {
+                alert('Not enough shares');
+            }
+        }
+
+        form.addEventListener('submit', e => {
+            e.preventDefault();
+            const name = document.getElementById('stockName').value.trim();
+            const price = parseFloat(document.getElementById('stockPrice').value);
+            const owned = parseInt(document.getElementById('stockOwned').value);
+            if (!name || isNaN(price) || isNaN(owned)) return;
+            stocks.push({ name, price, owned });
+            form.reset();
+            updateCurrencyDropdown();
+            updateTable();
+        });
+
+        tableBody.addEventListener('input', e => {
+            if (e.target.classList.contains('ownedInput')) {
+                const index = e.target.getAttribute('data-index');
+                stocks[index].owned = parseInt(e.target.value);
+                updateTable();
+            }
+        });
+
+        countryForm.addEventListener('submit', e => {
+            e.preventDefault();
+            const name = document.getElementById('countryName').value.trim();
+            const money = parseFloat(document.getElementById('countryMoney').value);
+            const currency = document.getElementById('countryCurrency').value;
+            if (!name || isNaN(money)) return;
+            countries.push({ name, money, currency, portfolio: {} });
+            countryForm.reset();
+            updateCountryDisplays();
+        });
+
+        updateTable();
+    </script>
+</body>
+</html>
